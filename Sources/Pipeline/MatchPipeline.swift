@@ -57,6 +57,20 @@ final class MatchPipeline: ObservableObject {
         resolvedPlaylistID = nil
     }
 
+    /// Best-effort fetch of the signed-in user so the UI can show "Signed in as <name>" without waiting for a match.
+    func refreshUserInfo() async {
+        guard auth.isSignedIn else { return }
+        do {
+            let user = try await client.currentUser()
+            cachedUserID = user.id
+            if let name = user.displayName, !name.isEmpty {
+                settings.userDisplayName = name
+            }
+        } catch {
+            log.notice("Couldn't fetch user info: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     func process(_ song: RecognizedSong) async {
         log.info("Processing match: \(song.title, privacy: .public) — \(song.artist, privacy: .public)")
         lastStatus = .searching(songTitle: song.title)
@@ -156,6 +170,10 @@ final class MatchPipeline: ObservableObject {
         if let id = cachedUserID { return id }
         let user = try await client.currentUser()
         cachedUserID = user.id
+        // Cache the display name for the UI so we don't have to hit /me on every launch.
+        if let name = user.displayName, !name.isEmpty {
+            settings.userDisplayName = name
+        }
         return user.id
     }
 

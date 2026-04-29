@@ -2,12 +2,12 @@ import Foundation
 import OSLog
 
 final class SpotifyClient {
-    private let auth: SpotifyAuth
+    private let tokenProvider: TokenProviding
     private let session: URLSession
     private let log = Logger.api
 
-    init(auth: SpotifyAuth, session: URLSession = .shared) {
-        self.auth = auth
+    init(auth: TokenProviding, session: URLSession = .shared) {
+        self.tokenProvider = auth
         self.session = session
     }
 
@@ -41,9 +41,12 @@ final class SpotifyClient {
         return resp.tracks.items.first
     }
 
-    func playlists(limit: Int = 50) async throws -> [SpotifyPlaylist] {
+    func playlists(limit: Int = 50, offset: Int = 0) async throws -> [SpotifyPlaylist] {
         struct Page: Decodable { let items: [SpotifyPlaylist] }
-        let p: Page = try await get("/me/playlists", query: ["limit": "\(limit)"])
+        let p: Page = try await get("/me/playlists", query: [
+            "limit": "\(limit)",
+            "offset": "\(offset)",
+        ])
         return p.items
     }
 
@@ -109,7 +112,7 @@ final class SpotifyClient {
 
     private func authorize(_ request: URLRequest, forceRefresh: Bool = false) async throws -> URLRequest {
         var req = request
-        let token = try await auth.validAccessToken(forceRefresh: forceRefresh)
+        let token = try await tokenProvider.validAccessToken(forceRefresh: forceRefresh)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         return req
     }

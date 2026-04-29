@@ -184,7 +184,13 @@ final class MockSpotifyClient: SpotifyClientProtocol {
     func currentUser() async throws -> SpotifyUser { currentUserResult }
     func searchTrack(byISRC isrc: String) async throws -> SpotifyTrack? { searchByISRCResult }
     func searchTrack(name: String, artist: String) async throws -> SpotifyTrack? { searchByNameResult }
-    func playlists(limit: Int) async throws -> [SpotifyPlaylist] { playlists_returns }
+    func playlists(limit: Int, offset: Int) async throws -> [SpotifyPlaylist] {
+        // Simulate paging: only return entries beyond `offset`. Tests using small fixture
+        // sets just rely on the first page (offset == 0) being non-empty.
+        guard offset < playlists_returns.count else { return [] }
+        let end = min(offset + limit, playlists_returns.count)
+        return Array(playlists_returns[offset..<end])
+    }
     func createPlaylist(userID: String, name: String, description: String, isPublic: Bool) async throws -> SpotifyPlaylist {
         guard let p = createPlaylistReturns else { throw NSError(domain: "Mock", code: 0) }
         return p

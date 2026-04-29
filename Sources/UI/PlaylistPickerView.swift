@@ -26,7 +26,18 @@ struct PlaylistPickerView: View {
 
     @ViewBuilder
     private var content: some View {
-        if loading {
+        if !auth.isSignedIn {
+            VStack(spacing: 12) {
+                Image(systemName: "lock.fill").font(.largeTitle).foregroundStyle(.secondary)
+                Text("Sign in to Spotify first").font(.headline)
+                Text("Then you can pick which playlist to auto-add to.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding()
+        } else if loading {
             ProgressView("Loading your playlists…")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let err = loadError {
@@ -34,6 +45,7 @@ struct PlaylistPickerView: View {
                 Image(systemName: "exclamationmark.triangle.fill").font(.largeTitle).foregroundStyle(.orange)
                 Text(err).multilineTextAlignment(.center).padding(.horizontal)
                 Button("Retry") { Task { await load() } }
+                    .buttonStyle(.borderedProminent)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
@@ -60,43 +72,61 @@ struct PlaylistPickerView: View {
                     }
                     .buttonStyle(.plain)
                 }
-                Section("Your playlists") {
-                    ForEach(playlists) { playlist in
-                        Button {
-                            settings.targetPlaylistID = playlist.id
-                            settings.targetPlaylistName = playlist.name
-                            pipeline.invalidatePlaylistCache()
-                            dismiss()
-                        } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(playlist.name).bold()
-                                    if let count = playlist.tracks?.total {
-                                        Text("\(count) track\(count == 1 ? "" : "s")")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
+
+                Section {
+                    if playlists.isEmpty {
+                        Text("No playlists found in your library.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(playlists) { playlist in
+                            Button {
+                                settings.targetPlaylistID = playlist.id
+                                settings.targetPlaylistName = playlist.name
+                                pipeline.invalidatePlaylistCache()
+                                dismiss()
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(playlist.name).bold()
+                                        if let count = playlist.tracks?.total {
+                                            Text("\(count) track\(count == 1 ? "" : "s")")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    Spacer()
+                                    if settings.targetPlaylistID == playlist.id {
+                                        Image(systemName: "checkmark").foregroundStyle(.tint)
                                     }
                                 }
-                                Spacer()
-                                if settings.targetPlaylistID == playlist.id {
-                                    Image(systemName: "checkmark").foregroundStyle(.tint)
-                                }
                             }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("\(playlist.name)\(playlist.tracks.map { ", \($0.total) tracks" } ?? "")")
                         }
-                        .buttonStyle(.plain)
+                    }
+                } header: {
+                    HStack {
+                        Text("Your playlists")
+                        Spacer()
+                        if !playlists.isEmpty {
+                            Text("\(playlists.count)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
             .listStyle(.insetGrouped)
+            .refreshable { await load() }
         }
     }
 
     private func load() async {
+        guard auth.isSignedIn else { return }
         loading = true
         loadError = nil
         do {
             let client = SpotifyClient(auth: auth)
-            playlists = try await client.playlists(limit: 50)
+            playlists = try await client.allPlaylists(maxItems: 500)
             loading = false
         } catch {
             loadError = error.localizedDescription

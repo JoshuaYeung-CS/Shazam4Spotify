@@ -25,6 +25,14 @@ struct Shazam2SpotifyApp: App {
                 .environmentObject(settings)
                 .task {
                     pipeline.bind(to: matcher)
+                    if auth.isSignedIn { await pipeline.refreshUserInfo() }
+                }
+                .onChange(of: auth.isSignedIn) { _, signedIn in
+                    if signedIn {
+                        Task { await pipeline.refreshUserInfo() }
+                    } else {
+                        settings.userDisplayName = nil
+                    }
                 }
         }
     }

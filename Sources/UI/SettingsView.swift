@@ -15,6 +15,13 @@ struct SettingsView: View {
             Form {
                 Section("Account") {
                     if auth.isSignedIn {
+                        if let name = settings.userDisplayName {
+                            HStack {
+                                Text("Signed in as")
+                                Spacer()
+                                Text(name).foregroundStyle(.secondary)
+                            }
+                        }
                         Button("Sign out of Spotify", role: .destructive) {
                             Task { await auth.signOut() }
                         }

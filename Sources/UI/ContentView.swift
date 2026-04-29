@@ -68,7 +68,7 @@ struct ContentView: View {
         } else {
             HStack {
                 Circle().fill(.green).frame(width: 8, height: 8)
-                Text("Spotify connected")
+                Text(connectedText)
                 Spacer()
                 if let name = displayedPlaylistName {
                     Text("→ \(name)")
@@ -79,6 +79,11 @@ struct ContentView: View {
             .font(.footnote)
             .foregroundStyle(.secondary)
         }
+    }
+
+    private var connectedText: String {
+        if let name = settings.userDisplayName { return "Connected as \(name)" }
+        return "Spotify connected"
     }
 
     private var displayedPlaylistName: String? {
