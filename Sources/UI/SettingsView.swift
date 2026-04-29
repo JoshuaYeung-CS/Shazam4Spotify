@@ -10,6 +10,13 @@ struct SettingsView: View {
     @State private var showingPlaylistPicker = false
     @State private var confirmingClear = false
 
+    private var versionString: String {
+        let info = Bundle.main.infoDictionary
+        let short = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        return "\(short) (\(build))"
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -81,6 +88,13 @@ struct SettingsView: View {
                 }
 
                 Section("About") {
+                    HStack {
+                        Text("Version")
+                        Spacer()
+                        Text(versionString)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
                     HStack {
                         Text("Client ID")
                         Spacer()
