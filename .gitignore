@@ -1,0 +1,25 @@
+# Xcode user state — generated, machine-specific
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
+
+# xcodegen output (regenerable from project.yml — keep local copies, ignore in repo)
+*.xcodeproj/
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# macOS
+.DS_Store
+
+# CocoaPods / Carthage (unused but ignore in case)
+Pods/
+Carthage/Build/
+
+# Local config / secrets (none yet, but precautionary)
+*.local
+.env
+secrets.json
