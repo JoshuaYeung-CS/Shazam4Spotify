@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import OSLog
 
 @MainActor
 final class MatchPipeline: ObservableObject {
@@ -15,19 +16,26 @@ final class MatchPipeline: ObservableObject {
     @Published private(set) var lastStatus: Status = .idle
     @Published private(set) var caughtSongs: [CaughtEntry] = []
 
-    private let client: SpotifyClient
-    private let auth: SpotifyAuth
+    private let client: SpotifyClientProtocol
+    private let auth: AuthStateProviding
     private let settings: AppSettings
-    private let store = CaughtStore()
+    private let store: CaughtStore
+    private let log = Logger.pipeline
     private var bag = Set<AnyCancellable>()
 
     private var cachedUserID: String?
     private var resolvedPlaylistID: String?
 
-    init(auth: SpotifyAuth, client: SpotifyClient, settings: AppSettings) {
+    init(
+        auth: AuthStateProviding,
+        client: SpotifyClientProtocol,
+        settings: AppSettings,
+        store: CaughtStore = CaughtStore()
+    ) {
         self.auth = auth
         self.client = client
         self.settings = settings
+        self.store = store
         self.caughtSongs = store.load()
     }
 
@@ -50,17 +58,22 @@ final class MatchPipeline: ObservableObject {
     }
 
     func process(_ song: RecognizedSong) async {
+        log.info("Processing match: \(song.title, privacy: .public) — \(song.artist, privacy: .public)")
         lastStatus = .searching(songTitle: song.title)
         do {
             guard auth.isSignedIn else { throw PipelineError.notSignedIn }
+
             let track = try await resolveTrack(for: song)
             guard let track else {
+                log.notice("No Spotify match for ISRC=\(song.isrc ?? "nil", privacy: .public)")
                 record(.init(song: song, track: nil, status: .notOnSpotify))
                 lastStatus = .skipped(reason: "Not found on Spotify", songTitle: song.title)
                 if settings.hapticsEnabled { Haptics.warning() }
                 return
             }
+
             let playlistID = try await ensurePlaylist()
+
             let alreadyIn = try await client.playlistContains(playlistID: playlistID, trackURI: track.uri)
             if alreadyIn {
                 record(.init(song: song, track: track, status: .alreadyInPlaylist))
@@ -68,16 +81,21 @@ final class MatchPipeline: ObservableObject {
                 if settings.hapticsEnabled { Haptics.warning() }
                 return
             }
-            try await client.addTrack(playlistID: playlistID, trackURI: track.uri)
+
+            try await addTrackWithRecovery(playlistID: playlistID, track: track)
+            log.info("Added \(track.uri, privacy: .public) to playlist \(playlistID, privacy: .public)")
             record(.init(song: song, track: track, status: .added))
             lastStatus = .added(songTitle: track.name, artist: track.artistNames)
             if settings.hapticsEnabled { Haptics.success() }
         } catch {
+            log.error("Pipeline failure: \(error.localizedDescription, privacy: .public)")
             record(.init(song: song, track: nil, status: .failed(error.localizedDescription)))
             lastStatus = .failed(reason: error.localizedDescription, songTitle: song.title)
             if settings.hapticsEnabled { Haptics.error() }
         }
     }
+
+    // MARK: - private
 
     private func record(_ entry: CaughtEntry) {
         caughtSongs.insert(entry, at: 0)
@@ -89,6 +107,23 @@ final class MatchPipeline: ObservableObject {
             return track
         }
         return try await client.searchTrack(name: song.title, artist: song.artist)
+    }
+
+    /// Adds a track, recovering once if Spotify returns 404 (typically: target playlist was deleted on the server).
+    private func addTrackWithRecovery(playlistID: String, track: SpotifyTrack) async throws {
+        do {
+            try await client.addTrack(playlistID: playlistID, trackURI: track.uri)
+        } catch {
+            guard error.spotifyStatus == 404 else { throw error }
+            log.notice("Target playlist \(playlistID, privacy: .public) appears gone — re-resolving and retrying")
+            resolvedPlaylistID = nil
+            if settings.targetPlaylistID == playlistID {
+                settings.targetPlaylistID = nil
+                settings.targetPlaylistName = nil
+            }
+            let recoveredID = try await ensurePlaylist()
+            try await client.addTrack(playlistID: recoveredID, trackURI: track.uri)
+        }
     }
 
     private func ensurePlaylist() async throws -> String {

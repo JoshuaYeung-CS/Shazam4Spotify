@@ -1,7 +1,9 @@
 import AVFAudio
 import Combine
 import Foundation
+import OSLog
 import ShazamKit
+import UIKit
 
 struct RecognizedSong: Identifiable, Hashable, Codable {
     let id: UUID
@@ -60,6 +62,7 @@ final class ShazamMatcher: NSObject, ObservableObject {
 
     private var interruptionObserver: NSObjectProtocol?
     private var routeChangeObserver: NSObjectProtocol?
+    private var foregroundObserver: NSObjectProtocol?
 
     /// Tracks whether the user explicitly asked to listen — used to auto-resume after an interruption ends.
     private var userIntentToListen = false
@@ -72,13 +75,16 @@ final class ShazamMatcher: NSObject, ObservableObject {
     deinit {
         if let interruptionObserver { NotificationCenter.default.removeObserver(interruptionObserver) }
         if let routeChangeObserver { NotificationCenter.default.removeObserver(routeChangeObserver) }
+        if let foregroundObserver { NotificationCenter.default.removeObserver(foregroundObserver) }
     }
 
     func start() async {
         userIntentToListen = true
         guard state != .listening else { return }
+        Logger.matcher.info("Listen requested")
         let granted = await AudioSessionManager.requestMicPermission()
         guard granted else {
+            Logger.matcher.error("Microphone permission denied")
             state = .error(AudioSessionManager.permissionDeniedMessage)
             userIntentToListen = false
             return
@@ -87,13 +93,16 @@ final class ShazamMatcher: NSObject, ObservableObject {
             try AudioSessionManager.configureForListening()
             try startEngine()
             state = .listening
+            Logger.matcher.info("Audio engine started, ShazamKit session active")
         } catch {
+            Logger.matcher.error("Failed to start engine: \(error.localizedDescription, privacy: .public)")
             state = .error(error.localizedDescription)
             userIntentToListen = false
         }
     }
 
     func stop() {
+        Logger.matcher.info("Listen stopped by user")
         userIntentToListen = false
         teardownEngine()
         AudioSessionManager.deactivate()
@@ -139,6 +148,29 @@ final class ShazamMatcher: NSObject, ObservableObject {
         ) { [weak self] note in
             Task { @MainActor in self?.handleRouteChange(note) }
         }
+
+        foregroundObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.willEnterForegroundNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.handleForeground() }
+        }
+    }
+
+    /// If the system suspended the engine while we were in the background and the user still wants to listen,
+    /// detect the discrepancy on foreground and restart.
+    private func handleForeground() {
+        guard userIntentToListen, state == .listening, !audioEngine.isRunning else { return }
+        Logger.matcher.notice("Engine died while suspended; restarting on foreground")
+        teardownEngine()
+        do {
+            try AudioSessionManager.configureForListening()
+            try startEngine()
+        } catch {
+            Logger.matcher.error("Foreground restart failed: \(error.localizedDescription, privacy: .public)")
+            state = .error(error.localizedDescription)
+        }
     }
 
     private func handleInterruption(_ note: Notification) {
@@ -149,6 +181,7 @@ final class ShazamMatcher: NSObject, ObservableObject {
 
         switch type {
         case .began:
+            Logger.matcher.notice("Audio session interrupted")
             teardownEngine()
             if userIntentToListen { state = .interrupted }
         case .ended:
@@ -158,12 +191,17 @@ final class ShazamMatcher: NSObject, ObservableObject {
                 guard let optionsRaw = info[AVAudioSessionInterruptionOptionKey] as? UInt else { return false }
                 return AVAudioSession.InterruptionOptions(rawValue: optionsRaw).contains(.shouldResume)
             }()
-            guard shouldResume else { return }
+            guard shouldResume else {
+                Logger.matcher.notice("Interruption ended; system did not signal shouldResume")
+                return
+            }
+            Logger.matcher.info("Resuming after interruption")
             do {
                 try AudioSessionManager.configureForListening()
                 try startEngine()
                 state = .listening
             } catch {
+                Logger.matcher.error("Failed to resume: \(error.localizedDescription, privacy: .public)")
                 state = .error(error.localizedDescription)
             }
         @unknown default:
@@ -207,6 +245,7 @@ extension ShazamMatcher: SHSessionDelegate {
         }
         lastMatchedISRC = item.isrc
         lastMatchedAt = now
+        Logger.matcher.info("Match: \(item.title ?? "?", privacy: .public) — \(item.artist ?? "?", privacy: .public) (ISRC=\(item.isrc ?? "nil", privacy: .public))")
         matchPublisher.send(RecognizedSong(item: item))
     }
 }

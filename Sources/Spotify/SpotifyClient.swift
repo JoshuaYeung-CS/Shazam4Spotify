@@ -1,8 +1,10 @@
 import Foundation
+import OSLog
 
 final class SpotifyClient {
     private let auth: SpotifyAuth
     private let session: URLSession
+    private let log = Logger.api
 
     init(auth: SpotifyAuth, session: URLSession = .shared) {
         self.auth = auth
@@ -113,8 +115,19 @@ final class SpotifyClient {
     }
 
     private func perform<T: Decodable>(_ req: URLRequest, retriesLeft: Int = 1) async throws -> T {
-        let (data, resp) = try await session.data(for: req)
+        let method = req.httpMethod ?? "GET"
+        let urlString = req.url?.absoluteString ?? "?"
+
+        let data: Data
+        let resp: URLResponse
+        do {
+            (data, resp) = try await session.data(for: req)
+        } catch {
+            log.error("Network error \(method, privacy: .public) \(urlString, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            throw SpotifyError.transport
+        }
         guard let http = resp as? HTTPURLResponse else { throw SpotifyError.transport }
+        log.debug("\(method, privacy: .public) \(urlString, privacy: .public) → \(http.statusCode)")
 
         if (200..<300).contains(http.statusCode) {
             // Some endpoints (e.g. DELETE) return empty bodies. Decoding "{}" works for empty Decodables.
@@ -128,6 +141,7 @@ final class SpotifyClient {
 
         // 401 — token may have expired since we last checked. Force a refresh and retry once.
         if http.statusCode == 401, retriesLeft > 0 {
+            log.notice("401 — forcing token refresh and retrying")
             let refreshed = try await authorize(req, forceRefresh: true)
             return try await perform(refreshed, retriesLeft: retriesLeft - 1)
         }
@@ -135,27 +149,72 @@ final class SpotifyClient {
         // 429 — rate limited. Respect Retry-After (capped at 5s so we stay snappy).
         if http.statusCode == 429, retriesLeft > 0 {
             let after = (http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init)) ?? 1.0
-            try await Task.sleep(nanoseconds: UInt64(min(after, 5.0) * 1_000_000_000))
+            let wait = min(after, 5.0)
+            log.notice("429 — rate-limited, waiting \(wait)s")
+            try await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
             return try await perform(req, retriesLeft: retriesLeft - 1)
         }
 
         // 5xx — transient server error. Retry GET only; POST may have side-effected on the server side already.
-        let method = req.httpMethod ?? "GET"
         if (500...599).contains(http.statusCode), retriesLeft > 0, method == "GET" {
+            log.notice("\(http.statusCode) — transient, retrying GET after 800ms")
             try await Task.sleep(nanoseconds: 800_000_000)
             return try await perform(req, retriesLeft: retriesLeft - 1)
         }
 
-        throw SpotifyError.api(status: http.statusCode, body: body)
+        throw SpotifyError.api(status: http.statusCode, message: parseSpotifyMessage(from: data) ?? body)
+    }
+
+    private func parseSpotifyMessage(from data: Data) -> String? {
+        // Spotify error envelope: `{"error": {"status": 404, "message": "..."}}`
+        struct Envelope: Decodable {
+            struct Inner: Decodable { let message: String? }
+            let error: Inner?
+        }
+        if let env = try? JSONDecoder().decode(Envelope.self, from: data),
+           let msg = env.error?.message, !msg.isEmpty {
+            return msg
+        }
+        // OAuth-style envelope: `{"error": "invalid_grant", "error_description": "..."}`
+        struct OAuthEnvelope: Decodable {
+            let error: String?
+            let error_description: String?
+        }
+        if let env = try? JSONDecoder().decode(OAuthEnvelope.self, from: data) {
+            if let desc = env.error_description, !desc.isEmpty { return desc }
+            if let err = env.error, !err.isEmpty { return err }
+        }
+        return nil
     }
 
     enum SpotifyError: Error, LocalizedError {
         case transport
-        case api(status: Int, body: String)
+        case api(status: Int, message: String)
+
         var errorDescription: String? {
             switch self {
-            case .transport: return "Network error talking to Spotify."
-            case .api(let s, let b): return "Spotify API \(s): \(b)"
+            case .transport: return "Couldn't reach Spotify. Check your network."
+            case .api(let s, let m): return prettyMessage(status: s, message: m)
+            }
+        }
+
+        var statusCode: Int? {
+            if case .api(let s, _) = self { return s }
+            return nil
+        }
+
+        private func prettyMessage(status: Int, message: String) -> String {
+            // Common cases get user-friendly mapping.
+            switch status {
+            case 401: return "Your Spotify session expired. Sign in again."
+            case 403: return message.contains("development mode")
+                ? "Add your Spotify account to the app's User Management list on developer.spotify.com."
+                : "Spotify rejected the request: \(message)"
+            case 404: return message.isEmpty ? "Resource not found on Spotify." : message
+            case 429: return "Spotify is rate-limiting us. Try again in a moment."
+            case 500...599: return "Spotify is having a hiccup (HTTP \(status)). Try again."
+            default:
+                return message.isEmpty ? "Spotify error (HTTP \(status))." : message
             }
         }
     }

@@ -88,9 +88,10 @@ struct ContentView: View {
     private var listenButton: some View {
         Button {
             Task {
-                if matcher.state == .listening {
+                switch matcher.state {
+                case .listening, .interrupted:
                     matcher.stop()
-                } else {
+                case .idle, .error:
                     await matcher.start()
                 }
             }
@@ -107,10 +108,33 @@ struct ContentView: View {
             }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(matcher.state == .listening ? "Stop listening" : "Start listening")
+        .accessibilityLabel(buttonAccessibilityLabel)
+        .accessibilityValue(buttonAccessibilityValue)
+        .accessibilityHint(buttonAccessibilityHint)
         .overlay(alignment: .bottom) {
             statusLabel
                 .offset(y: 36)
+        }
+    }
+
+    private var buttonAccessibilityLabel: String {
+        switch matcher.state {
+        case .idle: return "Listen for music"
+        case .listening: return "Listening"
+        case .interrupted: return "Listening paused"
+        case .error: return "Microphone unavailable"
+        }
+    }
+
+    private var buttonAccessibilityValue: String {
+        currentStatusText
+    }
+
+    private var buttonAccessibilityHint: String {
+        switch matcher.state {
+        case .listening, .interrupted: return "Double-tap to stop"
+        case .idle: return "Double-tap to start identifying songs"
+        case .error: return "Open Settings to grant microphone access"
         }
     }
 
@@ -190,12 +214,11 @@ struct ContentView: View {
                     Text("\(pipeline.caughtSongs.count)")
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
+                        .accessibilityLabel("\(pipeline.caughtSongs.count) songs caught")
                 }
             }
             if pipeline.caughtSongs.isEmpty {
-                Text("Nothing caught yet. Hit the button while music is playing.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                onboardingChecklist
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 10) {
@@ -208,6 +231,51 @@ struct ContentView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var onboardingChecklist: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ChecklistRow(
+                done: auth.isSignedIn,
+                title: "Sign in to Spotify",
+                detail: auth.isSignedIn ? "Connected" : "Tap the green button above"
+            )
+            ChecklistRow(
+                done: settings.targetPlaylistID != nil,
+                title: "Pick a target playlist",
+                detail: settings.targetPlaylistID != nil
+                    ? (settings.targetPlaylistName ?? "Selected")
+                    : "Defaults to “\(Config.defaultPlaylistName)” (auto-created on first match)"
+            )
+            ChecklistRow(
+                done: false,
+                title: "Tap the mic while music plays",
+                detail: "ShazamKit identifies the song; matches land in your playlist"
+            )
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct ChecklistRow: View {
+    let done: Bool
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: done ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(done ? .green : .secondary)
+                .font(.body.weight(.semibold))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.subheadline).bold()
+                Text(detail).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
     }
 }
 
@@ -240,6 +308,20 @@ private struct CaughtRow: View {
         }
         .buttonStyle(.plain)
         .disabled(entry.spotifyURL == nil)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityDescription)
+        .accessibilityHint(entry.spotifyURL != nil ? "Double-tap to open in Spotify" : "")
+    }
+
+    private var accessibilityDescription: String {
+        let statusPhrase: String
+        switch entry.status {
+        case .added: statusPhrase = "added to playlist"
+        case .alreadyInPlaylist: statusPhrase = "already in playlist"
+        case .notOnSpotify: statusPhrase = "not found on Spotify"
+        case .failed: statusPhrase = "failed to add"
+        }
+        return "\(entry.displayTitle) by \(entry.displayArtist). \(statusPhrase)."
     }
 
     @ViewBuilder

@@ -1,6 +1,7 @@
 import AuthenticationServices
 import CryptoKit
 import Foundation
+import OSLog
 import UIKit
 
 @MainActor
@@ -21,6 +22,7 @@ final class SpotifyAuth: NSObject, ObservableObject {
     }
 
     func signIn() async throws {
+        Logger.auth.info("Starting Spotify OAuth (PKCE) flow")
         let verifier = Self.makeCodeVerifier()
         let challenge = Self.codeChallenge(for: verifier)
         let state = UUID().uuidString
@@ -48,9 +50,11 @@ final class SpotifyAuth: NSObject, ObservableObject {
         let tokens = try await exchangeCode(code, verifier: verifier)
         try await TokenStore.shared.save(tokens)
         isSignedIn = true
+        Logger.auth.info("OAuth flow completed; tokens stored")
     }
 
     func signOut() async {
+        Logger.auth.info("Signing out — clearing tokens")
         await TokenStore.shared.clear()
         isSignedIn = false
     }
@@ -62,6 +66,7 @@ final class SpotifyAuth: NSObject, ObservableObject {
         if let inflight = refreshTask {
             return try await inflight.value.accessToken
         }
+        Logger.auth.info("Refreshing access token (\(forceRefresh ? "forced" : "expired"))")
         let task = Task<SpotifyTokens, Error> { [refreshToken = tokens.refreshToken] in
             let fresh = try await self.refresh(refreshToken: refreshToken)
             try await TokenStore.shared.save(fresh)
@@ -75,8 +80,11 @@ final class SpotifyAuth: NSObject, ObservableObject {
             // Only sign out on hard auth failures (400/401). Transient errors (5xx, network) bubble up
             // so the caller can retry without forcing the user to re-auth.
             if let auth = error as? AuthError, auth.requiresReauth {
+                Logger.auth.error("Refresh token rejected — signing out")
                 await TokenStore.shared.clear()
                 isSignedIn = false
+            } else {
+                Logger.auth.error("Token refresh transient failure: \(error.localizedDescription, privacy: .public)")
             }
             throw error
         }
