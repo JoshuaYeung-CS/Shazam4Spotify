@@ -94,7 +94,7 @@ final class SpotifyAuth: NSObject, ObservableObject {
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<URL, Error>) in
             let session = ASWebAuthenticationSession(
                 url: authURL,
-                callbackURLScheme: "shazam2spotify"
+                callbackURLScheme: "shazam4spotify"
             ) { url, err in
                 if let err {
                     let nsErr = err as NSError

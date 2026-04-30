@@ -12,7 +12,7 @@ struct SpotifyTokens: Codable, Equatable {
 actor TokenStore {
     static let shared = TokenStore()
 
-    private let service = "com.joshuayeung.shazam2spotify"
+    private let service = "com.joshuayeung.shazam4spotify"
     private let account = "spotify-tokens"
 
     private var cache: SpotifyTokens?

@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Shazam2Spotify</string>
+	<string>Shazam4Spotify</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -22,10 +22,10 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>com.joshuayeung.shazam2spotify.oauth</string>
+			<string>com.joshuayeung.shazam4spotify.oauth</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>shazam2spotify</string>
+				<string>shazam4spotify</string>
 			</array>
 		</dict>
 	</array>
@@ -34,7 +34,7 @@
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Shazam2Spotify needs the microphone to recognize songs playing around you.</string>
+	<string>Shazam4Spotify needs the microphone to recognize songs playing around you.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

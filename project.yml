@@ -1,4 +1,4 @@
-name: Shazam2Spotify
+name: Shazam4Spotify
 options:
   bundleIdPrefix: com.joshuayeung
   deploymentTarget:
@@ -17,7 +17,7 @@ settings:
     CODE_SIGN_STYLE: Automatic
 
 targets:
-  Shazam2Spotify:
+  Shazam4Spotify:
     type: application
     platform: iOS
     sources:
@@ -27,13 +27,13 @@ targets:
     info:
       path: Resources/Info.plist
       properties:
-        CFBundleDisplayName: Shazam2Spotify
+        CFBundleDisplayName: Shazam4Spotify
         CFBundleShortVersionString: "0.1.0"
         CFBundleVersion: "1"
         UILaunchScreen: {}
         UIBackgroundModes:
           - audio
-        NSMicrophoneUsageDescription: "Shazam2Spotify needs the microphone to recognize songs playing around you."
+        NSMicrophoneUsageDescription: "Shazam4Spotify needs the microphone to recognize songs playing around you."
         ITSAppUsesNonExemptEncryption: false
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
@@ -45,12 +45,12 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         CFBundleURLTypes:
-          - CFBundleURLName: com.joshuayeung.shazam2spotify.oauth
+          - CFBundleURLName: com.joshuayeung.shazam4spotify.oauth
             CFBundleURLSchemes:
-              - shazam2spotify
+              - shazam4spotify
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.joshuayeung.shazam2spotify
+        PRODUCT_BUNDLE_IDENTIFIER: com.joshuayeung.shazam4spotify
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Resources/Info.plist
         CURRENT_PROJECT_VERSION: 1
@@ -58,14 +58,14 @@ targets:
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
     dependencies: []
 
-  Shazam2SpotifyTests:
+  Shazam4SpotifyTests:
     type: bundle.unit-test
     platform: iOS
     sources:
       - path: Tests
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.joshuayeung.shazam2spotify.tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.joshuayeung.shazam4spotify.tests
         GENERATE_INFOPLIST_FILE: YES
     dependencies:
-      - target: Shazam2Spotify
+      - target: Shazam4Spotify

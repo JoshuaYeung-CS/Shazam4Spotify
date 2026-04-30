@@ -1,5 +1,5 @@
 import XCTest
-@testable import Shazam2Spotify
+@testable import Shazam4Spotify
 
 @MainActor
 final class MatchPipelineTests: XCTestCase {

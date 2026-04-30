@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct Shazam2SpotifyApp: App {
+struct Shazam4SpotifyApp: App {
     @StateObject private var auth: SpotifyAuth
     @StateObject private var matcher = ShazamMatcher()
     @StateObject private var settings = AppSettings()
