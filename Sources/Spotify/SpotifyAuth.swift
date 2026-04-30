@@ -160,7 +160,7 @@ final class SpotifyAuth: NSObject, ObservableObject {
         }
         let r = try JSONDecoder().decode(Resp.self, from: data)
         guard let refresh = r.refresh_token ?? fallbackRefresh else {
-            throw AuthError.tokenExchangeFailed("missing refresh token")
+            throw AuthError.tokenExchangeFailed(status: 200, body: "missing refresh token")
         }
         return SpotifyTokens(
             accessToken: r.access_token,

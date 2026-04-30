@@ -66,7 +66,13 @@ final class CaughtStoreTests: XCTestCase {
                 isrc: "ISRC\(i)",
                 recognizedAt: Date(timeIntervalSince1970: TimeInterval(1_700_000_000 + i))
             )
-            return CaughtEntry(song: song, track: nil, status: .added)
+            // Use deterministic timestamp so JSON round-trip equality holds (Date() has sub-ms precision that JSON loses).
+            return CaughtEntry(
+                song: song,
+                track: nil,
+                status: .added,
+                timestamp: Date(timeIntervalSince1970: TimeInterval(1_700_000_500 + i))
+            )
         }
     }
 }

@@ -30,13 +30,14 @@ final class MatchPipeline: ObservableObject {
         auth: AuthStateProviding,
         client: SpotifyClientProtocol,
         settings: AppSettings,
-        store: CaughtStore = CaughtStore()
+        store: CaughtStore? = nil
     ) {
+        let resolved = store ?? CaughtStore()
         self.auth = auth
         self.client = client
         self.settings = settings
-        self.store = store
-        self.caughtSongs = store.load()
+        self.store = resolved
+        self.caughtSongs = resolved.load()
     }
 
     func bind(to matcher: ShazamMatcher) {
@@ -201,12 +202,12 @@ struct CaughtEntry: Identifiable, Equatable, Codable {
     let status: Status
     let timestamp: Date
 
-    init(song: RecognizedSong, track: SpotifyTrack?, status: Status) {
-        self.id = UUID()
+    init(song: RecognizedSong, track: SpotifyTrack?, status: Status, id: UUID = UUID(), timestamp: Date = Date()) {
+        self.id = id
         self.song = song
         self.track = track
         self.status = status
-        self.timestamp = Date()
+        self.timestamp = timestamp
     }
 
     var displayTitle: String { track?.name ?? song.title }

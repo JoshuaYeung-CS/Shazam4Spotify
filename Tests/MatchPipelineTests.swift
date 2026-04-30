@@ -61,7 +61,7 @@ final class MatchPipelineTests: XCTestCase {
 
         await pipeline.process(makeSong())
 
-        XCTAssertEqual(client.addedTracks, [(samplePlaylist.id, sampleTrack.uri)])
+        XCTAssertEqual(client.addedTracks, [.init(playlistID: samplePlaylist.id, trackURI: sampleTrack.uri)])
         XCTAssertEqual(pipeline.caughtSongs.count, 1)
         XCTAssertEqual(pipeline.caughtSongs[0].status, .added)
     }
@@ -105,7 +105,7 @@ final class MatchPipelineTests: XCTestCase {
         // After recovery: targetPlaylistID should be cleared (or replaced) and the second add should hit a fresh playlist.
         XCTAssertEqual(pipeline.caughtSongs[0].status, .added, "Expected pipeline to recover and record .added")
         XCTAssertEqual(client.addedTracks.count, 2, "Expected one failed + one successful addTrack")
-        XCTAssertEqual(client.addedTracks.last?.0, samplePlaylist.id)
+        XCTAssertEqual(client.addedTracks.last?.playlistID, samplePlaylist.id)
         XCTAssertEqual(settings.targetPlaylistID, samplePlaylist.id)
     }
 
@@ -178,7 +178,8 @@ final class MockSpotifyClient: SpotifyClientProtocol {
     var playlistContainsResult: Bool = false
     var addTrackBehavior: AddTrackBehavior = .alwaysSucceed
 
-    private(set) var addedTracks: [(String, String)] = []  // (playlistID, trackURI)
+    struct AddedTrack: Equatable { let playlistID: String; let trackURI: String }
+    private(set) var addedTracks: [AddedTrack] = []
     private var addCallCount = 0
 
     func currentUser() async throws -> SpotifyUser { currentUserResult }
@@ -198,7 +199,7 @@ final class MockSpotifyClient: SpotifyClientProtocol {
     func playlistContains(playlistID: String, trackURI: String) async throws -> Bool { playlistContainsResult }
     func addTrack(playlistID: String, trackURI: String) async throws {
         addCallCount += 1
-        addedTracks.append((playlistID, trackURI))
+        addedTracks.append(.init(playlistID: playlistID, trackURI: trackURI))
         switch addTrackBehavior {
         case .alwaysSucceed: return
         case .alwaysFail(let err): throw err
