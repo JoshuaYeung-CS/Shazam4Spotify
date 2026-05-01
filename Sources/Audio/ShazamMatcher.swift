@@ -53,12 +53,15 @@ final class ShazamMatcher: NSObject, ObservableObject {
     }
 
     @Published private(set) var state: State = .idle
+    /// Smoothed mic input level, normalized 0…1. Drives audio-reactive UI.
+    @Published private(set) var inputLevel: Float = 0
     let matchPublisher = PassthroughSubject<RecognizedSong, Never>()
 
     private let audioEngine = AVAudioEngine()
     private var session: SHSession?
     private var lastMatchedISRC: String?
     private var lastMatchedAt: Date?
+    private var lastLevelEmit: TimeInterval = 0
 
     private var interruptionObserver: NSObjectProtocol?
     private var routeChangeObserver: NSObjectProtocol?
@@ -107,6 +110,7 @@ final class ShazamMatcher: NSObject, ObservableObject {
         teardownEngine()
         AudioSessionManager.deactivate()
         if state == .listening || state == .interrupted { state = .idle }
+        inputLevel = 0
     }
 
     private func startEngine() throws {
@@ -117,8 +121,28 @@ final class ShazamMatcher: NSObject, ObservableObject {
         let input = audioEngine.inputNode
         let format = input.outputFormat(forBus: 0)
         input.removeTap(onBus: 0)
-        input.installTap(onBus: 0, bufferSize: 2048, format: format) { [weak newSession] buffer, audioTime in
+        input.installTap(onBus: 0, bufferSize: 2048, format: format) { [weak newSession, weak self] buffer, audioTime in
             newSession?.matchStreamingBuffer(buffer, at: audioTime)
+
+            // Compute RMS amplitude on the audio thread (cheap), then publish on main with throttling.
+            let frameLength = Int(buffer.frameLength)
+            guard frameLength > 0, let channelData = buffer.floatChannelData?[0] else { return }
+            var sumSquares: Float = 0
+            for i in 0..<frameLength {
+                let sample = channelData[i]
+                sumSquares += sample * sample
+            }
+            let rms = sqrt(sumSquares / Float(frameLength))
+            // Music typically RMS ~0.05–0.3; multiplier scales that to 0…1.
+            let normalized = min(rms * 4, 1.0)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let now = Date().timeIntervalSinceReferenceDate
+                if now - self.lastLevelEmit < 0.05 { return }
+                self.lastLevelEmit = now
+                // Low-pass filter for smooth visual decay.
+                self.inputLevel = self.inputLevel * 0.55 + normalized * 0.45
+            }
         }
         audioEngine.prepare()
         try audioEngine.start()

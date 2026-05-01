@@ -102,10 +102,37 @@ struct ContentView: View {
             }
         } label: {
             ZStack {
+                // Audio-reactive ripple rings — only render while listening.
+                if matcher.state == .listening {
+                    Circle()
+                        .stroke(buttonGradient, lineWidth: 3)
+                        .frame(
+                            width: 200 + CGFloat(matcher.inputLevel) * 90,
+                            height: 200 + CGFloat(matcher.inputLevel) * 90
+                        )
+                        .opacity(0.55)
+                        .animation(.easeOut(duration: 0.18), value: matcher.inputLevel)
+
+                    Circle()
+                        .stroke(buttonGradient, lineWidth: 2)
+                        .frame(
+                            width: 200 + CGFloat(matcher.inputLevel) * 160,
+                            height: 200 + CGFloat(matcher.inputLevel) * 160
+                        )
+                        .opacity(0.25)
+                        .animation(.easeOut(duration: 0.32), value: matcher.inputLevel)
+                }
+
                 Circle()
                     .fill(buttonGradient)
                     .frame(width: 200, height: 200)
-                    .shadow(radius: matcher.state == .listening ? 16 : 6)
+                    .scaleEffect(matcher.state == .listening ? 1 + CGFloat(matcher.inputLevel) * 0.05 : 1)
+                    .animation(.easeOut(duration: 0.2), value: matcher.inputLevel)
+                    .shadow(
+                        radius: matcher.state == .listening
+                            ? 12 + CGFloat(matcher.inputLevel) * 14
+                            : 6
+                    )
                 Image(systemName: buttonIcon)
                     .font(.system(size: 64, weight: .semibold))
                     .foregroundStyle(.white)
