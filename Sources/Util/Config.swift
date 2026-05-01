@@ -14,6 +14,6 @@ enum Config {
         "user-read-private",
     ]
 
-    static let defaultPlaylistName = "🎵 Caught"
+    static let defaultPlaylistName = "Shazam Songs"
     static let defaultPlaylistDescription = "Songs auto-added by Shazam4Spotify"
 }
