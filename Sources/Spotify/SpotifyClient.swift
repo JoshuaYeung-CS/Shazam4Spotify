@@ -84,6 +84,18 @@ final class SpotifyClient {
         let _: SnapshotResponse = try await post("/playlists/\(playlistID)/tracks", body: ["uris": [trackURI]])
     }
 
+    /// Add a track to the user's Liked Songs library. Requires `user-library-modify` scope.
+    func saveToLikedSongs(trackID: String) async throws {
+        struct Empty: Decodable {}
+        let _: Empty = try await put("/me/tracks", query: ["ids": trackID])
+    }
+
+    /// Check whether a track is already in the user's Liked Songs. Requires `user-library-read` scope.
+    func likedSongsContains(trackID: String) async throws -> Bool {
+        let result: [Bool] = try await get("/me/tracks/contains", query: ["ids": trackID])
+        return result.first ?? false
+    }
+
     private func makeURL(path: String, query: [String: String] = [:]) -> URL {
         var components = URLComponents(url: Config.spotifyAPIBase.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
         if !query.isEmpty {
@@ -106,6 +118,13 @@ final class SpotifyClient {
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let authed = try await authorize(req)
+        return try await perform(authed)
+    }
+
+    private func put<T: Decodable>(_ path: String, query: [String: String] = [:]) async throws -> T {
+        var req = URLRequest(url: makeURL(path: path, query: query))
+        req.httpMethod = "PUT"
         let authed = try await authorize(req)
         return try await perform(authed)
     }
@@ -165,7 +184,9 @@ final class SpotifyClient {
             return try await perform(req, retriesLeft: retriesLeft - 1)
         }
 
-        throw SpotifyError.api(status: http.statusCode, message: parseSpotifyMessage(from: data) ?? body)
+        let parsedMessage = parseSpotifyMessage(from: data) ?? body
+        log.error("\(http.statusCode) on \(method, privacy: .public) \(urlString, privacy: .public): \(parsedMessage, privacy: .public)")
+        throw SpotifyError.api(status: http.statusCode, message: parsedMessage)
     }
 
     private func parseSpotifyMessage(from data: Data) -> String? {
