@@ -231,7 +231,7 @@ struct ContentView: View {
         switch pipeline.lastStatus {
         case .idle: return "Listening…"
         case .searching(let title): return "Found “\(title)” — checking Spotify…"
-        case .added(let title, _): return "Added “\(title)” to playlist"
+        case .added(let title, _, let summary): return "“\(title)” — \(summary)"
         case .skipped(let reason, let title): return "“\(title)”: \(reason)"
         case .failed(let reason, _): return "Error: \(reason)"
         }

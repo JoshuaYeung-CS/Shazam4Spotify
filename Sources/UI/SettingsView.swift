@@ -39,36 +39,68 @@ struct SettingsView: View {
                     }
                 }
 
-                Section("Target playlist") {
-                    Button {
-                        showingPlaylistPicker = true
-                    } label: {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(settings.targetPlaylistName ?? "Default — \(Config.defaultPlaylistName)")
-                                    .foregroundStyle(.primary)
-                                Text(settings.targetPlaylistID == nil
-                                     ? "Auto-creates if missing"
-                                     : "Tap to change")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
+                Section {
+                    Toggle(isOn: $settings.saveToLikedSongs) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Liked Songs")
+                            Text("Add every match to your library").font(.caption).foregroundStyle(.secondary)
                         }
                     }
-                    .disabled(!auth.isSignedIn)
-
-                    if let id = settings.targetPlaylistID,
+                    Toggle(isOn: $settings.saveToShazamPlaylist) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(Config.defaultPlaylistName)
+                            Text("Auto-created playlist of every match").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    if settings.saveToShazamPlaylist,
+                       let id = settings.targetPlaylistID,
                        let url = URL(string: "spotify:playlist:\(id)") {
                         Button {
                             openURL(url)
                         } label: {
-                            Label("Open playlist in Spotify", systemImage: "arrow.up.right.square")
+                            Label("Open \(Config.defaultPlaylistName) in Spotify", systemImage: "arrow.up.right.square")
+                                .font(.caption)
                         }
                     }
+                } header: {
+                    Text("Default destinations")
+                } footer: {
+                    Text("Every recognized song is added to each enabled destination.")
+                }
+
+                Section {
+                    if settings.additionalPlaylistIDs.isEmpty {
+                        Text("No additional playlists picked")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(settings.additionalPlaylistIDs, id: \.self) { id in
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(settings.additionalPlaylistNames[id] ?? "Playlist")
+                                    Text(id).font(.caption2.monospaced()).foregroundStyle(.tertiary)
+                                }
+                                Spacer()
+                                Button(role: .destructive) {
+                                    removePlaylist(id: id)
+                                } label: {
+                                    Image(systemName: "minus.circle.fill")
+                                        .foregroundStyle(.red)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                    Button {
+                        showingPlaylistPicker = true
+                    } label: {
+                        Label("Add a playlist", systemImage: "plus.circle.fill")
+                    }
+                    .disabled(!auth.isSignedIn)
+                } header: {
+                    Text("Additional playlists")
+                } footer: {
+                    Text("Matches are mirrored into each. Useful for genre playlists, shared collabs, etc.")
                 }
 
                 Section("Feedback") {
@@ -125,8 +157,13 @@ struct SettingsView: View {
                 Button("Clear", role: .destructive) { pipeline.clearHistory() }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("This only clears the on-device list. Songs already added to your Spotify playlist stay there.")
+                Text("This only clears the on-device list. Songs already added to your Spotify playlists stay there.")
             }
         }
+    }
+
+    private func removePlaylist(id: String) {
+        settings.additionalPlaylistIDs.removeAll { $0 == id }
+        settings.additionalPlaylistNames.removeValue(forKey: id)
     }
 }

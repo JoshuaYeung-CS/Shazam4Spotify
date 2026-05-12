@@ -20,6 +20,11 @@ final class MatchPipelineTests: XCTestCase {
         settings = AppSettings()
         settings.targetPlaylistID = nil
         settings.targetPlaylistName = nil
+        // Default to playlist-only in tests; opt-in to liked songs per-test.
+        settings.saveToLikedSongs = false
+        settings.saveToShazamPlaylist = true
+        settings.additionalPlaylistIDs = []
+        settings.additionalPlaylistNames = [:]
 
         auth = MockAuth()
         client = MockSpotifyClient()
@@ -53,7 +58,7 @@ final class MatchPipelineTests: XCTestCase {
         }
     }
 
-    func testHappyPathAddsAndRecords() async {
+    func testHappyPathAddsToShazamPlaylist() async {
         client.searchByISRCResult = sampleTrack
         client.playlists_returns = []
         client.createPlaylistReturns = samplePlaylist
@@ -64,6 +69,67 @@ final class MatchPipelineTests: XCTestCase {
         XCTAssertEqual(client.addedTracks, [.init(playlistID: samplePlaylist.id, trackURI: sampleTrack.uri)])
         XCTAssertEqual(pipeline.caughtSongs.count, 1)
         XCTAssertEqual(pipeline.caughtSongs[0].status, .added)
+    }
+
+    func testLikedSongsOnly() async {
+        settings.saveToLikedSongs = true
+        settings.saveToShazamPlaylist = false
+        client.searchByISRCResult = sampleTrack
+        let pipeline = makePipeline()
+
+        await pipeline.process(makeSong())
+
+        XCTAssertEqual(client.savedToLikedSongs, [sampleTrack.id])
+        XCTAssertTrue(client.addedTracks.isEmpty)
+        XCTAssertEqual(pipeline.caughtSongs[0].status, .added)
+    }
+
+    func testBothLikedAndPlaylistDestinations() async {
+        settings.saveToLikedSongs = true
+        settings.saveToShazamPlaylist = true
+        client.searchByISRCResult = sampleTrack
+        client.playlists_returns = []
+        client.createPlaylistReturns = samplePlaylist
+        let pipeline = makePipeline()
+
+        await pipeline.process(makeSong())
+
+        XCTAssertEqual(client.savedToLikedSongs, [sampleTrack.id])
+        XCTAssertEqual(client.addedTracks, [.init(playlistID: samplePlaylist.id, trackURI: sampleTrack.uri)])
+        XCTAssertEqual(pipeline.caughtSongs[0].status, .added)
+    }
+
+    func testAdditionalPlaylistMirroring() async {
+        let extraPlaylistID = "extra-playlist-id"
+        settings.saveToLikedSongs = false
+        settings.saveToShazamPlaylist = false
+        settings.additionalPlaylistIDs = [extraPlaylistID]
+        settings.additionalPlaylistNames = [extraPlaylistID: "My Genre Playlist"]
+        client.searchByISRCResult = sampleTrack
+        let pipeline = makePipeline()
+
+        await pipeline.process(makeSong())
+
+        XCTAssertEqual(client.addedTracks, [.init(playlistID: extraPlaylistID, trackURI: sampleTrack.uri)])
+        XCTAssertEqual(pipeline.caughtSongs[0].status, .added)
+    }
+
+    func testNoDestinationsEnabledFailsGracefully() async {
+        settings.saveToLikedSongs = false
+        settings.saveToShazamPlaylist = false
+        settings.additionalPlaylistIDs = []
+        client.searchByISRCResult = sampleTrack
+        let pipeline = makePipeline()
+
+        await pipeline.process(makeSong())
+
+        if case .failed(let msg) = pipeline.caughtSongs[0].status {
+            XCTAssertTrue(msg.contains("destinations"))
+        } else {
+            XCTFail("Expected .failed when no destinations enabled")
+        }
+        XCTAssertTrue(client.addedTracks.isEmpty)
+        XCTAssertTrue(client.savedToLikedSongs.isEmpty)
     }
 
     func testSongNotOnSpotifyIsRecordedSeparately() async {
@@ -87,26 +153,6 @@ final class MatchPipelineTests: XCTestCase {
 
         XCTAssertTrue(client.addedTracks.isEmpty)
         XCTAssertEqual(pipeline.caughtSongs[0].status, .alreadyInPlaylist)
-    }
-
-    func testAutoRecoveryWhenPlaylistDeleted() async {
-        // Set up: user-picked playlist whose addTrack 404s the first time, succeeds the second.
-        settings.targetPlaylistID = "stale-playlist"
-        settings.targetPlaylistName = "Old Playlist"
-        client.searchByISRCResult = sampleTrack
-        client.playlistContainsResult = false
-        client.playlists_returns = []  // forces createPlaylist on retry
-        client.createPlaylistReturns = samplePlaylist
-        client.addTrackBehavior = .failFirstThenSucceed(error: SpotifyClient.SpotifyError.api(status: 404, message: "Playlist not found"))
-
-        let pipeline = makePipeline()
-        await pipeline.process(makeSong())
-
-        // After recovery: targetPlaylistID should be cleared (or replaced) and the second add should hit a fresh playlist.
-        XCTAssertEqual(pipeline.caughtSongs[0].status, .added, "Expected pipeline to recover and record .added")
-        XCTAssertEqual(client.addedTracks.count, 2, "Expected one failed + one successful addTrack")
-        XCTAssertEqual(client.addedTracks.last?.playlistID, samplePlaylist.id)
-        XCTAssertEqual(settings.targetPlaylistID, samplePlaylist.id)
     }
 
     func testHistoryPersistsAcrossNewPipeline() async {
@@ -176,18 +222,18 @@ final class MockSpotifyClient: SpotifyClientProtocol {
     var playlists_returns: [SpotifyPlaylist] = []
     var createPlaylistReturns: SpotifyPlaylist!
     var playlistContainsResult: Bool = false
+    var likedSongsContainsResult: Bool = false
     var addTrackBehavior: AddTrackBehavior = .alwaysSucceed
 
     struct AddedTrack: Equatable { let playlistID: String; let trackURI: String }
     private(set) var addedTracks: [AddedTrack] = []
+    private(set) var savedToLikedSongs: [String] = []
     private var addCallCount = 0
 
     func currentUser() async throws -> SpotifyUser { currentUserResult }
     func searchTrack(byISRC isrc: String) async throws -> SpotifyTrack? { searchByISRCResult }
     func searchTrack(name: String, artist: String) async throws -> SpotifyTrack? { searchByNameResult }
     func playlists(limit: Int, offset: Int) async throws -> [SpotifyPlaylist] {
-        // Simulate paging: only return entries beyond `offset`. Tests using small fixture
-        // sets just rely on the first page (offset == 0) being non-empty.
         guard offset < playlists_returns.count else { return [] }
         let end = min(offset + limit, playlists_returns.count)
         return Array(playlists_returns[offset..<end])
@@ -207,6 +253,10 @@ final class MockSpotifyClient: SpotifyClientProtocol {
             if addCallCount == 1 { throw err }
         }
     }
+    func saveToLikedSongs(trackID: String) async throws {
+        savedToLikedSongs.append(trackID)
+    }
+    func likedSongsContains(trackID: String) async throws -> Bool { likedSongsContainsResult }
 }
 
 // MARK: - Mock auth + test-only helpers on Spotify models
@@ -239,7 +289,6 @@ extension SpotifyPlaylist {
 
 extension SpotifyTrack {
     init(id: String, uri: String, name: String, artists: [Artist], album: Album?, externalIDs: ExternalIDs?) {
-        // Construct via JSON because Decodable-only types don't have memberwise inits.
         let payload: [String: Any] = [
             "id": id,
             "uri": uri,

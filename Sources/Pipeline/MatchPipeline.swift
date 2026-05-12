@@ -8,7 +8,7 @@ final class MatchPipeline: ObservableObject {
     enum Status: Equatable {
         case idle
         case searching(songTitle: String)
-        case added(songTitle: String, artist: String)
+        case added(songTitle: String, artist: String, summary: String)
         case skipped(reason: String, songTitle: String)
         case failed(reason: String, songTitle: String)
     }
@@ -24,7 +24,7 @@ final class MatchPipeline: ObservableObject {
     private var bag = Set<AnyCancellable>()
 
     private var cachedUserID: String?
-    private var resolvedPlaylistID: String?
+    private var resolvedShazamPlaylistID: String?
 
     init(
         auth: AuthStateProviding,
@@ -53,9 +53,9 @@ final class MatchPipeline: ObservableObject {
         store.clear()
     }
 
-    /// Forget the cached playlist resolution — call after the user changes the target playlist in Settings.
+    /// Forget the cached Shazam-playlist resolution — call after the user changes target settings.
     func invalidatePlaylistCache() {
-        resolvedPlaylistID = nil
+        resolvedShazamPlaylistID = nil
     }
 
     /// Best-effort fetch of the signed-in user so the UI can show "Signed in as <name>" without waiting for a match.
@@ -87,21 +87,51 @@ final class MatchPipeline: ObservableObject {
                 return
             }
 
-            let playlistID = try await ensurePlaylist()
-
-            let alreadyIn = try await client.playlistContains(playlistID: playlistID, trackURI: track.uri)
-            if alreadyIn {
-                record(.init(song: song, track: track, status: .alreadyInPlaylist))
-                lastStatus = .skipped(reason: "Already in playlist", songTitle: track.name)
+            let destinations = await buildDestinations()
+            guard !destinations.isEmpty else {
+                let msg = "No destinations enabled — turn on Liked Songs or a playlist in Settings"
+                record(.init(song: song, track: track, status: .failed(msg)))
+                lastStatus = .failed(reason: msg, songTitle: track.name)
                 if settings.hapticsEnabled { Haptics.warning() }
                 return
             }
 
-            try await addTrackWithRecovery(playlistID: playlistID, track: track)
-            log.info("Added \(track.uri, privacy: .public) to playlist \(playlistID, privacy: .public)")
-            record(.init(song: song, track: track, status: .added))
-            lastStatus = .added(songTitle: track.name, artist: track.artistNames)
-            if settings.hapticsEnabled { Haptics.success() }
+            var addedTo: [String] = []
+            var alreadyIn: [String] = []
+            var failedAt: [(String, String)] = []  // (label, error message)
+
+            for dest in destinations {
+                do {
+                    if try await isAlreadyIn(track: track, destination: dest) {
+                        log.info("\(dest.label, privacy: .public): already contains track — skipping")
+                        alreadyIn.append(dest.label)
+                        continue
+                    }
+                    try await add(track: track, to: dest)
+                    log.info("Added \(track.uri, privacy: .public) → \(dest.label, privacy: .public)")
+                    addedTo.append(dest.label)
+                } catch {
+                    log.error("Failed \(dest.label, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    failedAt.append((dest.label, error.localizedDescription))
+                }
+            }
+
+            // Aggregate result.
+            if !addedTo.isEmpty {
+                let summary = makeSummary(added: addedTo, alreadyIn: alreadyIn, failed: failedAt)
+                record(.init(song: song, track: track, status: .added))
+                lastStatus = .added(songTitle: track.name, artist: track.artistNames, summary: summary)
+                if settings.hapticsEnabled { Haptics.success() }
+            } else if alreadyIn.count == destinations.count {
+                record(.init(song: song, track: track, status: .alreadyInPlaylist))
+                lastStatus = .skipped(reason: "Already saved everywhere", songTitle: track.name)
+                if settings.hapticsEnabled { Haptics.warning() }
+            } else {
+                let firstError = failedAt.first?.1 ?? "All destinations refused the track"
+                record(.init(song: song, track: track, status: .failed(firstError)))
+                lastStatus = .failed(reason: firstError, songTitle: track.name)
+                if settings.hapticsEnabled { Haptics.error() }
+            }
         } catch {
             log.error("Pipeline failure: \(error.localizedDescription, privacy: .public)")
             record(.init(song: song, track: nil, status: .failed(error.localizedDescription)))
@@ -110,7 +140,110 @@ final class MatchPipeline: ObservableObject {
         }
     }
 
-    // MARK: - private
+    // MARK: - destinations
+
+    private enum Destination {
+        case likedSongs
+        case playlist(id: String, name: String)
+
+        var label: String {
+            switch self {
+            case .likedSongs: return "Liked Songs"
+            case .playlist(_, let name): return name
+            }
+        }
+    }
+
+    /// Builds the list of enabled destinations for the current match.
+    /// Failing to resolve the Shazam playlist silently omits it rather than failing the whole pipeline.
+    private func buildDestinations() async -> [Destination] {
+        var result: [Destination] = []
+        if settings.saveToLikedSongs { result.append(.likedSongs) }
+        if settings.saveToShazamPlaylist, let id = await ensureShazamPlaylistID() {
+            result.append(.playlist(id: id, name: Config.defaultPlaylistName))
+        }
+        for id in settings.additionalPlaylistIDs {
+            let name = settings.additionalPlaylistNames[id] ?? "Playlist"
+            result.append(.playlist(id: id, name: name))
+        }
+        return result
+    }
+
+    private func ensureShazamPlaylistID() async -> String? {
+        if let id = resolvedShazamPlaylistID { return id }
+        // Reuse previously resolved/persisted ID if present.
+        if let id = settings.targetPlaylistID {
+            resolvedShazamPlaylistID = id
+            return id
+        }
+        // Look up by name, otherwise create.
+        do {
+            let userID = try await currentUserID()
+            if let existing = try await client.playlists().first(where: { $0.name == Config.defaultPlaylistName }) {
+                resolvedShazamPlaylistID = existing.id
+                settings.targetPlaylistID = existing.id
+                settings.targetPlaylistName = existing.name
+                return existing.id
+            }
+            let new = try await client.createPlaylist(
+                userID: userID,
+                name: Config.defaultPlaylistName,
+                description: Config.defaultPlaylistDescription
+            )
+            resolvedShazamPlaylistID = new.id
+            settings.targetPlaylistID = new.id
+            settings.targetPlaylistName = new.name
+            return new.id
+        } catch {
+            log.error("Couldn't ensure Shazam playlist: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+    }
+
+    private func isAlreadyIn(track: SpotifyTrack, destination: Destination) async throws -> Bool {
+        switch destination {
+        case .likedSongs:
+            return try await client.likedSongsContains(trackID: track.id)
+        case .playlist(let id, _):
+            return try await client.playlistContains(playlistID: id, trackURI: track.uri)
+        }
+    }
+
+    private func add(track: SpotifyTrack, to destination: Destination) async throws {
+        switch destination {
+        case .likedSongs:
+            try await client.saveToLikedSongs(trackID: track.id)
+        case .playlist(let id, _):
+            do {
+                try await client.addTrack(playlistID: id, trackURI: track.uri)
+            } catch {
+                // If the playlist 404s, clear the cached resolution so the next attempt re-resolves.
+                if error.spotifyStatus == 404, id == resolvedShazamPlaylistID {
+                    log.notice("Shazam playlist \(id, privacy: .public) appears gone — clearing cache")
+                    resolvedShazamPlaylistID = nil
+                    settings.targetPlaylistID = nil
+                    settings.targetPlaylistName = nil
+                }
+                throw error
+            }
+        }
+    }
+
+    // MARK: - helpers
+
+    private func makeSummary(added: [String], alreadyIn: [String], failed: [(String, String)]) -> String {
+        var parts: [String] = []
+        if !added.isEmpty {
+            parts.append("added to \(added.joined(separator: ", "))")
+        }
+        if !alreadyIn.isEmpty {
+            parts.append("already in \(alreadyIn.joined(separator: ", "))")
+        }
+        if !failed.isEmpty {
+            parts.append("failed: \(failed.map(\.0).joined(separator: ", "))")
+        }
+        return parts.joined(separator: " · ")
+    }
 
     private func record(_ entry: CaughtEntry) {
         caughtSongs.insert(entry, at: 0)
@@ -124,54 +257,10 @@ final class MatchPipeline: ObservableObject {
         return try await client.searchTrack(name: song.title, artist: song.artist)
     }
 
-    /// Adds a track, recovering once if Spotify returns 404 (typically: target playlist was deleted on the server).
-    private func addTrackWithRecovery(playlistID: String, track: SpotifyTrack) async throws {
-        do {
-            try await client.addTrack(playlistID: playlistID, trackURI: track.uri)
-        } catch {
-            guard error.spotifyStatus == 404 else { throw error }
-            log.notice("Target playlist \(playlistID, privacy: .public) appears gone — re-resolving and retrying")
-            resolvedPlaylistID = nil
-            if settings.targetPlaylistID == playlistID {
-                settings.targetPlaylistID = nil
-                settings.targetPlaylistName = nil
-            }
-            let recoveredID = try await ensurePlaylist()
-            try await client.addTrack(playlistID: recoveredID, trackURI: track.uri)
-        }
-    }
-
-    private func ensurePlaylist() async throws -> String {
-        if let id = resolvedPlaylistID { return id }
-
-        // 1. User-picked playlist takes priority.
-        if let id = settings.targetPlaylistID {
-            resolvedPlaylistID = id
-            return id
-        }
-
-        // 2. Otherwise look up (or create) the default-named playlist.
-        let userID = try await currentUserID()
-        if let existing = try await client.playlists().first(where: { $0.name == Config.defaultPlaylistName }) {
-            resolvedPlaylistID = existing.id
-            return existing.id
-        }
-        let new = try await client.createPlaylist(
-            userID: userID,
-            name: Config.defaultPlaylistName,
-            description: Config.defaultPlaylistDescription
-        )
-        resolvedPlaylistID = new.id
-        settings.targetPlaylistID = new.id
-        settings.targetPlaylistName = new.name
-        return new.id
-    }
-
     private func currentUserID() async throws -> String {
         if let id = cachedUserID { return id }
         let user = try await client.currentUser()
         cachedUserID = user.id
-        // Cache the display name for the UI so we don't have to hit /me on every launch.
         if let name = user.displayName, !name.isEmpty {
             settings.userDisplayName = name
         }

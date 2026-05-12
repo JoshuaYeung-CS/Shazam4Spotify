@@ -8,6 +8,8 @@ protocol SpotifyClientProtocol: AnyObject {
     func createPlaylist(userID: String, name: String, description: String, isPublic: Bool) async throws -> SpotifyPlaylist
     func playlistContains(playlistID: String, trackURI: String) async throws -> Bool
     func addTrack(playlistID: String, trackURI: String) async throws
+    func saveToLikedSongs(trackID: String) async throws
+    func likedSongsContains(trackID: String) async throws -> Bool
 }
 
 extension SpotifyClientProtocol {

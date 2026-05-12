@@ -13,7 +13,7 @@ struct PlaylistPickerView: View {
     var body: some View {
         NavigationStack {
             content
-                .navigationTitle("Choose playlist")
+                .navigationTitle("Add a playlist")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
@@ -30,7 +30,7 @@ struct PlaylistPickerView: View {
             VStack(spacing: 12) {
                 Image(systemName: "lock.fill").font(.largeTitle).foregroundStyle(.secondary)
                 Text("Sign in to Spotify first").font(.headline)
-                Text("Then you can pick which playlist to auto-add to.")
+                Text("Then you can pick playlists to mirror matches into.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -51,58 +51,13 @@ struct PlaylistPickerView: View {
         } else {
             List {
                 Section {
-                    Button {
-                        settings.targetPlaylistID = nil
-                        settings.targetPlaylistName = nil
-                        pipeline.invalidatePlaylistCache()
-                        dismiss()
-                    } label: {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Default — auto-create").bold()
-                                Text("Will use “\(Config.defaultPlaylistName)” (creates it if missing)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            if settings.targetPlaylistID == nil {
-                                Image(systemName: "checkmark").foregroundStyle(.tint)
-                            }
-                        }
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                Section {
                     if playlists.isEmpty {
                         Text("No playlists found in your library.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     } else {
                         ForEach(playlists) { playlist in
-                            Button {
-                                settings.targetPlaylistID = playlist.id
-                                settings.targetPlaylistName = playlist.name
-                                pipeline.invalidatePlaylistCache()
-                                dismiss()
-                            } label: {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(playlist.name).bold()
-                                        if let count = playlist.tracks?.total {
-                                            Text("\(count) track\(count == 1 ? "" : "s")")
-                                                .font(.caption)
-                                                .foregroundStyle(.secondary)
-                                        }
-                                    }
-                                    Spacer()
-                                    if settings.targetPlaylistID == playlist.id {
-                                        Image(systemName: "checkmark").foregroundStyle(.tint)
-                                    }
-                                }
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("\(playlist.name)\(playlist.tracks.map { ", \($0.total) tracks" } ?? "")")
+                            row(for: playlist)
                         }
                     }
                 } header: {
@@ -113,10 +68,60 @@ struct PlaylistPickerView: View {
                             Text("\(playlists.count)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                         }
                     }
+                } footer: {
+                    Text("Tap a playlist to mirror matches into it. Tap again to remove.")
                 }
             }
             .listStyle(.insetGrouped)
             .refreshable { await load() }
+        }
+    }
+
+    @ViewBuilder
+    private func row(for playlist: SpotifyPlaylist) -> some View {
+        let isAdded = settings.additionalPlaylistIDs.contains(playlist.id)
+        let isShazamTarget = settings.targetPlaylistID == playlist.id
+
+        Button {
+            toggle(playlist: playlist)
+        } label: {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(playlist.name).bold()
+                    if isShazamTarget {
+                        Text("Already used as your \(Config.defaultPlaylistName) playlist")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else if let count = playlist.tracks?.total {
+                        Text("\(count) track\(count == 1 ? "" : "s")")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                if isAdded {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                } else if isShazamTarget {
+                    Image(systemName: "star.circle.fill").foregroundStyle(.yellow)
+                } else {
+                    Image(systemName: "plus.circle").foregroundStyle(.secondary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(isShazamTarget)
+        .accessibilityLabel("\(playlist.name)\(isAdded ? ", added" : "")")
+    }
+
+    private func toggle(playlist: SpotifyPlaylist) {
+        if settings.additionalPlaylistIDs.contains(playlist.id) {
+            settings.additionalPlaylistIDs.removeAll { $0 == playlist.id }
+            settings.additionalPlaylistNames.removeValue(forKey: playlist.id)
+        } else {
+            settings.additionalPlaylistIDs.append(playlist.id)
+            var names = settings.additionalPlaylistNames
+            names[playlist.id] = playlist.name
+            settings.additionalPlaylistNames = names
         }
     }
 

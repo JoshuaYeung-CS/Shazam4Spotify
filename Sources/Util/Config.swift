@@ -12,6 +12,8 @@ enum Config {
         "playlist-modify-private",
         "playlist-modify-public",
         "user-read-private",
+        "user-library-read",
+        "user-library-modify",
     ]
 
     static let defaultPlaylistName = "Shazam Songs"
