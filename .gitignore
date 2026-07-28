@@ -23,3 +23,6 @@ Carthage/Build/
 *.local
 .env
 secrets.json
+.pipeline/
+.claude/settings.local.json
+.claude/vision.md
