@@ -6,6 +6,8 @@
 Built because Apple's official Shazam app only deep-links to Apple Music — there's
 no first-party equivalent for Spotify users. Shazam4Spotify closes that gap.
 
+New here? Read [START_HERE.md](START_HERE.md).
+
 <p align="center">
   <img src="docs/screenshots/empty-state.png" width="280" alt="Home — signed in, idle">
   &nbsp;&nbsp;
